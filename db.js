@@ -3,6 +3,22 @@ const path = require("path");
 
 const DB_PATH = path.join(__dirname, "users.json");
 
+const OWNER_EMAILS = (process.env.OWNER_EMAILS || "")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+function ownerUser(email) {
+  return {
+    email,
+    planId: "owner",
+    minutesTotal: 999999,
+    minutesLeft: 999999,
+    stripeCustomerId: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function readAll() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
@@ -27,6 +43,7 @@ function defaultUser(email) {
 }
 
 function getOrCreateUser(email) {
+  if (OWNER_EMAILS.includes(email)) return ownerUser(email);
   const users = readAll();
   if (!users[email]) {
     users[email] = defaultUser(email);
@@ -51,6 +68,7 @@ function setUserPlan(email, planId, minutesTotal, stripeCustomerId) {
 }
 
 function deductMinutes(email, minutes) {
+  if (OWNER_EMAILS.includes(email)) return ownerUser(email);
   const users = readAll();
   const user = users[email] || defaultUser(email);
   user.minutesLeft = Math.max(0, user.minutesLeft - minutes);
