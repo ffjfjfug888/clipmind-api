@@ -108,6 +108,29 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 });
 
+app.post("/api/create-portal-session", async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!email) {
+    return res.status(400).json({ error: "Email required" });
+  }
+
+  const user = getOrCreateUser(email);
+  if (!user.stripeCustomerId) {
+    return res.status(400).json({ error: "no_subscription" });
+  }
+
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: CLIENT_URL,
+    });
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("[stripe] failed to create portal session:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/checkout-session/:id", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.retrieve(req.params.id);
