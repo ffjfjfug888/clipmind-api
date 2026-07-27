@@ -6,7 +6,24 @@ const { getOrCreateUser, setUserPlan, deductMinutes } = require("./db");
 
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const PORT = process.env.PORT || 4242;
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5199";
+// Used for redirect targets (Stripe success/cancel/portal return) — the
+// primary custom domain now that we own one, not a vercel.app alias.
+const CLIENT_URL = process.env.CLIENT_URL || "https://clipmindapp.net";
+
+// CORS needs every domain the frontend can actually be loaded from, not just
+// the primary one — this list previously only had the old vercel.app alias,
+// which silently broke every API call once clipmindapp.net went live.
+const ALLOWED_ORIGINS = [
+  "http://localhost:5199",
+  "https://clipmindapp.net",
+  "https://www.clipmindapp.net",
+  "https://clipmind-swart.vercel.app",
+  "https://clipmindai.vercel.app",
+  "https://clipmind-app.vercel.app",
+  "https://clipmindapp.vercel.app",
+  "https://getclipmind.vercel.app",
+  "https://clipmind-video.vercel.app",
+];
 
 const PLANS = {
   starter: { name: "ClipMind Starter", price: 900, minutes: 150 },
@@ -15,7 +32,7 @@ const PLANS = {
 };
 
 const app = express();
-app.use(cors({ origin: CLIENT_URL }));
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
