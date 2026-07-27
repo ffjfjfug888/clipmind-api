@@ -85,6 +85,42 @@ async function sendCodeEmail(email, code) {
   }
 }
 
+// The OAuth client id is public by design — it ships inside the frontend
+// bundle — so a literal default is safe and saves an extra deploy-time setting.
+const GOOGLE_CLIENT_ID =
+  process.env.GOOGLE_OAUTH_CLIENT_ID ||
+  "27933207508-9kldpnd6fbc3attvfssootr40smgmrkj.apps.googleusercontent.com";
+
+// Google's tokeninfo endpoint validates the signature and expiry for us; we
+// still have to check the audience ourselves, otherwise a token minted for a
+// DIFFERENT Google app would be accepted here.
+async function verifyGoogleCredential(credential) {
+  if (typeof credential !== "string" || credential.length < 20) {
+    throw Object.assign(new Error("bad_google_token"), { status: 400 });
+  }
+
+  const res = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+  );
+  if (!res.ok) {
+    throw Object.assign(new Error("bad_google_token"), { status: 401 });
+  }
+
+  const info = await res.json();
+  if (info.aud !== GOOGLE_CLIENT_ID) {
+    throw Object.assign(new Error("bad_google_token"), { status: 401 });
+  }
+  if (info.email_verified !== "true" && info.email_verified !== true) {
+    throw Object.assign(new Error("google_email_unverified"), { status: 401 });
+  }
+
+  const email = normalizeEmail(info.email);
+  if (!email) {
+    throw Object.assign(new Error("bad_google_token"), { status: 401 });
+  }
+  return { email, token: signSession(email) };
+}
+
 async function requestCode(rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
@@ -145,7 +181,9 @@ module.exports = {
   normalizeEmail,
   requestCode,
   verifyCode,
+  verifyGoogleCredential,
   verifySession,
   emailFromRequest,
+  GOOGLE_CLIENT_ID,
   isConfigured: () => Boolean(RESEND_API_KEY),
 };

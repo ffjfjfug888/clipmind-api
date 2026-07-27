@@ -80,6 +80,17 @@ app.post("/api/auth/request-code", async (req, res) => {
   }
 });
 
+app.post("/api/auth/google", async (req, res) => {
+  try {
+    const { email, token } = await auth.verifyGoogleCredential(req.body?.credential);
+    res.json({ token, user: getOrCreateUser(email) });
+  } catch (err) {
+    const status = err.status || 500;
+    if (status === 500) console.error("[auth] google sign-in failed:", err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
 app.post("/api/auth/verify-code", (req, res) => {
   try {
     const { email, token } = auth.verifyCode(req.body?.email, req.body?.code);
