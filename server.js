@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const Stripe = require("stripe");
 const { getOrCreateUser, setUserPlan, deductMinutes } = require("./db");
+const auth = require("./auth");
 
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const PORT = process.env.PORT || 4242;
@@ -68,21 +69,44 @@ app.post("/api/webhook", express.raw({ type: "application/json" }), (req, res) =
 
 app.use(express.json());
 
+app.post("/api/auth/request-code", async (req, res) => {
+  try {
+    const email = await auth.requestCode(req.body?.email);
+    res.json({ ok: true, email });
+  } catch (err) {
+    const status = err.status || 500;
+    if (status === 500) console.error("[auth] request-code failed:", err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/verify-code", (req, res) => {
+  try {
+    const { email, token } = auth.verifyCode(req.body?.email, req.body?.code);
+    const user = getOrCreateUser(email);
+    res.json({ token, user });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+// The plan (and the minutes it grants) is now keyed to a verified session.
+// Previously any caller could pass any email and be handed that account's
+// plan — including the owner's unlimited one.
 app.get("/api/me", (req, res) => {
-  const email = normalizeEmail(req.query.email);
-  if (!email) return res.status(400).json({ error: "email required" });
-  const user = getOrCreateUser(email);
-  res.json(user);
+  const email = auth.emailFromRequest(req);
+  if (!email) return res.status(401).json({ error: "unauthorized" });
+  res.json(getOrCreateUser(email));
 });
 
 app.post("/api/deduct-minutes", (req, res) => {
-  const email = normalizeEmail(req.body?.email);
+  const email = auth.emailFromRequest(req);
+  if (!email) return res.status(401).json({ error: "unauthorized" });
   const minutes = Number(req.body?.minutes);
-  if (!email || !Number.isFinite(minutes)) {
-    return res.status(400).json({ error: "email and minutes required" });
+  if (!Number.isFinite(minutes)) {
+    return res.status(400).json({ error: "minutes required" });
   }
-  const user = deductMinutes(email, minutes);
-  res.json(user);
+  res.json(deductMinutes(email, minutes));
 });
 
 app.post("/api/create-checkout-session", async (req, res) => {
