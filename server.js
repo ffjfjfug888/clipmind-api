@@ -161,9 +161,12 @@ app.post("/api/create-checkout-session", async (req, res) => {
 });
 
 app.post("/api/create-portal-session", async (req, res) => {
-  const email = normalizeEmail(req.body?.email);
+  // A Stripe portal URL authenticates by possession alone: it exposes invoice
+  // history, the card's last four and the ability to cancel. Taking the email
+  // from the body let anyone who knew an address open that customer's console.
+  const email = auth.emailFromRequest(req);
   if (!email) {
-    return res.status(400).json({ error: "Email required" });
+    return res.status(401).json({ error: "unauthorized" });
   }
 
   const user = getOrCreateUser(email);
