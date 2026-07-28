@@ -42,8 +42,12 @@ function verifySession(token) {
   const [payload, sig] = token.split(".");
   const expected = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
   // timingSafeEqual throws on length mismatch, so compare lengths first.
-  if (sig.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  // timingSafeEqual throws on a length mismatch, and it measures BYTES — a
+  // string-length check passes for multi-byte input of the same char count.
+  if (sigBuf.length !== expectedBuf.length) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
   try {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString());
     if (!data.email || !data.exp || Date.now() > data.exp) return null;
@@ -121,10 +125,41 @@ async function verifyGoogleCredential(credential) {
   return { email, token: signSession(email) };
 }
 
-async function requestCode(rawEmail) {
+// Per-email cooldown alone let one caller walk a list of addresses and mail a
+// code to each, so the sender is rate limited too — and the code map is swept,
+// since an unbounded Map is its own denial of service.
+const senders = new Map(); // ip -> { count, windowStart }
+const SENDER_WINDOW_MS = 60 * 60 * 1000;
+const SENDER_MAX_PER_WINDOW = 20;
+
+function sweepExpired() {
+  const now = Date.now();
+  for (const [key, entry] of codes) {
+    if (now > entry.expiresAt + CODE_TTL_MS) codes.delete(key);
+  }
+  for (const [key, entry] of senders) {
+    if (now - entry.windowStart > SENDER_WINDOW_MS) senders.delete(key);
+  }
+}
+
+async function requestCode(rawEmail, senderKey) {
+  sweepExpired();
+
   const email = normalizeEmail(rawEmail);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     throw Object.assign(new Error("invalid_email"), { status: 400 });
+  }
+
+  if (senderKey) {
+    const now = Date.now();
+    const seen = senders.get(senderKey);
+    if (!seen || now - seen.windowStart > SENDER_WINDOW_MS) {
+      senders.set(senderKey, { count: 1, windowStart: now });
+    } else if (seen.count >= SENDER_MAX_PER_WINDOW) {
+      throw Object.assign(new Error("too_many_requests"), { status: 429 });
+    } else {
+      seen.count += 1;
+    }
   }
 
   const existing = codes.get(email);

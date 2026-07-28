@@ -57,7 +57,9 @@ app.post("/api/webhook", express.raw({ type: "application/json" }), (req, res) =
     const plan = PLANS[planId];
 
     if (email && plan) {
-      setUserPlan(email, planId, plan.minutes, session.customer);
+      setUserPlan(email, planId, plan.minutes, session.customer).catch((e) =>
+        console.error("[stripe] persist failed:", e.message)
+      );
       console.log(`[stripe] subscription persisted via webhook: ${email} -> ${planId}`);
     } else {
       console.warn("[stripe] checkout.session.completed missing email or unknown plan, skipped persistence");
@@ -71,7 +73,12 @@ app.use(express.json());
 
 app.post("/api/auth/request-code", async (req, res) => {
   try {
-    const email = await auth.requestCode(req.body?.email);
+    // Render sits behind a proxy, so the real client IP is in the forwarded
+    // header; req.ip would be the proxy for everyone.
+    const senderKey = String(req.headers["x-forwarded-for"] || req.ip || "")
+      .split(",")[0]
+      .trim();
+    const email = await auth.requestCode(req.body?.email, senderKey);
     res.json({ ok: true, email });
   } catch (err) {
     const status = err.status || 500;
@@ -83,7 +90,7 @@ app.post("/api/auth/request-code", async (req, res) => {
 app.post("/api/auth/google", async (req, res) => {
   try {
     const { email, token } = await auth.verifyGoogleCredential(req.body?.credential);
-    res.json({ token, user: getOrCreateUser(email) });
+    res.json({ token, user: await getOrCreateUser(email) });
   } catch (err) {
     const status = err.status || 500;
     if (status === 500) console.error("[auth] google sign-in failed:", err.message);
@@ -91,10 +98,10 @@ app.post("/api/auth/google", async (req, res) => {
   }
 });
 
-app.post("/api/auth/verify-code", (req, res) => {
+app.post("/api/auth/verify-code", async (req, res) => {
   try {
     const { email, token } = auth.verifyCode(req.body?.email, req.body?.code);
-    const user = getOrCreateUser(email);
+    const user = await getOrCreateUser(email);
     res.json({ token, user });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
@@ -104,20 +111,20 @@ app.post("/api/auth/verify-code", (req, res) => {
 // The plan (and the minutes it grants) is now keyed to a verified session.
 // Previously any caller could pass any email and be handed that account's
 // plan — including the owner's unlimited one.
-app.get("/api/me", (req, res) => {
+app.get("/api/me", async (req, res) => {
   const email = auth.emailFromRequest(req);
   if (!email) return res.status(401).json({ error: "unauthorized" });
-  res.json(getOrCreateUser(email));
+  res.json(await getOrCreateUser(email));
 });
 
-app.post("/api/deduct-minutes", (req, res) => {
+app.post("/api/deduct-minutes", async (req, res) => {
   const email = auth.emailFromRequest(req);
   if (!email) return res.status(401).json({ error: "unauthorized" });
   const minutes = Number(req.body?.minutes);
   if (!Number.isFinite(minutes)) {
     return res.status(400).json({ error: "minutes required" });
   }
-  res.json(deductMinutes(email, minutes));
+  res.json(await deductMinutes(email, minutes));
 });
 
 app.post("/api/create-checkout-session", async (req, res) => {
@@ -169,7 +176,7 @@ app.post("/api/create-portal-session", async (req, res) => {
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  const user = getOrCreateUser(email);
+  const user = await getOrCreateUser(email);
   if (!user.stripeCustomerId) {
     return res.status(400).json({ error: "no_subscription" });
   }
@@ -193,9 +200,16 @@ app.get("/api/checkout-session/:id", async (req, res) => {
     const email = normalizeEmail(session.metadata?.email || session.customer_details?.email || session.customer_email);
     const plan = PLANS[planId];
 
+    // The success URL is replayable: re-opening it used to re-run setUserPlan
+    // and reset minutesLeft to the full allowance, so a saved link topped the
+    // balance back up for free. Only provision a plan the account lacks.
     let persistedUser = null;
     if (session.payment_status === "paid" && email && plan) {
-      persistedUser = setUserPlan(email, planId, plan.minutes, session.customer);
+      const existing = await getOrCreateUser(email);
+      persistedUser =
+        existing.planId === planId
+          ? existing
+          : await setUserPlan(email, planId, plan.minutes, session.customer);
     }
 
     res.json({
