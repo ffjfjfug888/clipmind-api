@@ -129,14 +129,19 @@ app.post("/api/deduct-minutes", async (req, res) => {
 
 app.post("/api/create-checkout-session", async (req, res) => {
   const { planId } = req.body || {};
-  const email = normalizeEmail(req.body?.email);
+  // The email MUST come from the session, never the body. Taking it from the
+  // body meant an unverified address decided where the subscription landed: a
+  // typo, or later signing in with Google under a different address, left the
+  // plan attached to a key the payer could never reach — money taken, no plan.
+  // It also let a signed-in user attach a subscription to someone else's email.
+  const email = auth.emailFromRequest(req);
   const plan = PLANS[planId];
 
   if (!plan) {
     return res.status(400).json({ error: "Unknown plan" });
   }
   if (!email) {
-    return res.status(400).json({ error: "Email required" });
+    return res.status(401).json({ error: "sign_in_required" });
   }
 
   try {
