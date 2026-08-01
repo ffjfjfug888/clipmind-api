@@ -133,4 +133,18 @@ async function deductMinutes(email, minutes) {
   });
 }
 
-module.exports = { getOrCreateUser, setUserPlan, deductMinutes };
+// Top-ups ADD to the balance and leave the plan alone — buying extra minutes
+// must not silently change which tier someone is on, or reset their renewal.
+async function addMinutes(email, minutes) {
+  const extra = Math.max(0, Math.round(Number(minutes) || 0));
+  if (!extra) return loadUser(email);
+  const user = (await loadUser(email)) || defaultUser(email);
+  return saveUser(email, {
+    ...user,
+    minutesLeft: (user.minutesLeft || 0) + extra,
+    minutesTotal: (user.minutesTotal || 0) + extra,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+module.exports = { getOrCreateUser, setUserPlan, deductMinutes, addMinutes };

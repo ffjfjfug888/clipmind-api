@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const Stripe = require("stripe");
-const { getOrCreateUser, setUserPlan, deductMinutes } = require("./db");
+const { getOrCreateUser, setUserPlan, deductMinutes, addMinutes } = require("./db");
 const auth = require("./auth");
 
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -36,6 +36,14 @@ const PLANS = {
   business: { name: "ClipMind Business", price: 5900, minutes: 800 },
 };
 
+// Bundled minutes run $0.074-0.090 each; top-ups sit above that because
+// pay-as-you-go should never undercut a subscription. Cost is $0.0059/min, so
+// even the cheaper pack keeps ~95% before Stripe. Prices in CENTS.
+const TOPUPS = {
+  small: { name: "ClipMind +50 minutes", price: 600, minutes: 50 },
+  large: { name: "ClipMind +200 minutes", price: 2000, minutes: 200 },
+};
+
 const app = express();
 app.use(cors({ origin: ALLOWED_ORIGINS }));
 
@@ -56,6 +64,25 @@ app.post("/api/webhook", express.raw({ type: "application/json" }), (req, res) =
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
+
+    // A top-up must credit minutes, not switch the plan. Handled first so a
+    // pack purchase can never be mistaken for a subscription change.
+    if (session.metadata?.kind === "topup") {
+      const email = normalizeEmail(
+        session.metadata?.email || session.customer_details?.email || session.customer_email
+      );
+      const minutes = Number(session.metadata?.minutes);
+      if (email && Number.isFinite(minutes) && minutes > 0) {
+        addMinutes(email, minutes).catch((e) =>
+          console.error("[stripe] top-up credit failed:", e.message)
+        );
+        console.log(`[stripe] top-up credited via webhook: ${email} +${minutes} min`);
+      } else {
+        console.warn("[stripe] top-up completed but email or minutes missing, skipped");
+      }
+      return res.json({ received: true });
+    }
+
     const planId = session.metadata?.planId;
     const email = normalizeEmail(session.metadata?.email || session.customer_details?.email || session.customer_email);
     const plan = PLANS[planId];
@@ -172,6 +199,40 @@ app.post("/api/create-checkout-session", async (req, res) => {
     res.json({ url: session.url });
   } catch (err) {
     console.error("[stripe] failed to create checkout session:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/create-topup-session", async (req, res) => {
+  const email = auth.emailFromRequest(req);
+  if (!email) return res.status(401).json({ error: "sign_in_required" });
+
+  const pack = TOPUPS[req.body?.packId];
+  if (!pack) return res.status(400).json({ error: "Unknown pack" });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      customer_email: email,
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: pack.name },
+            unit_amount: pack.price,
+          },
+          quantity: 1,
+        },
+      ],
+      // "kind" is what tells the webhook to ADD minutes rather than switch plan.
+      metadata: { kind: "topup", packId: req.body.packId, email, minutes: String(pack.minutes) },
+      success_url: `${CLIENT_URL}/?checkout=topup&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${CLIENT_URL}/?checkout=cancelled`,
+    });
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("[stripe] failed to create top-up session:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
