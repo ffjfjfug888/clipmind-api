@@ -26,10 +26,14 @@ const ALLOWED_ORIGINS = [
   "https://clipmind-video.vercel.app",
 ];
 
+// Minutes are priced at roughly $0.075-0.09 each, which is where the market
+// sits (OpusClip: $15 for 150 minutes). Verified cost per minute is $0.0059 —
+// whisper $0.00185, download $0.00024, moment-picking $0.0038 — so these leave
+// ~88% gross before Stripe's 2.9% + $0.30. Prices are in CENTS.
 const PLANS = {
-  starter: { name: "ClipMind Starter", price: 900, minutes: 150 },
-  pro: { name: "ClipMind Pro", price: 2400, minutes: 400 },
-  business: { name: "ClipMind Business", price: 5900, minutes: 1000 },
+  starter: { name: "ClipMind Starter", price: 900, minutes: 100 },
+  pro: { name: "ClipMind Pro", price: 2400, minutes: 300 },
+  business: { name: "ClipMind Business", price: 5900, minutes: 800 },
 };
 
 const app = express();
