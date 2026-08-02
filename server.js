@@ -15,15 +15,13 @@ const CLIENT_URL = process.env.CLIENT_URL || "https://clipmindapp.net";
 // the primary one — this list previously only had the old vercel.app alias,
 // which silently broke every API call once clipmindapp.net went live.
 const ALLOWED_ORIGINS = [
+  // Only origins we actually own. Five vercel.app names were listed here that
+  // belong to somebody else's Vercel team (they redirect to a foreign SSO) —
+  // allowlisting a domain you do not control hands out cross-origin API access.
   "http://localhost:5199",
   "https://clipmindapp.net",
   "https://www.clipmindapp.net",
   "https://clipmind-swart.vercel.app",
-  "https://clipmindai.vercel.app",
-  "https://clipmind-app.vercel.app",
-  "https://clipmindapp.vercel.app",
-  "https://getclipmind.vercel.app",
-  "https://clipmind-video.vercel.app",
 ];
 
 // Minutes are priced at roughly $0.075-0.09 each, which is where the market
