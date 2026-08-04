@@ -31,8 +31,11 @@ function defaultUser(email) {
   return {
     email,
     planId: "free",
-    minutesTotal: 30,
-    minutesLeft: 30,
+    // Must match the free tier the site advertises (PLANS.free.minutes = 10 in
+    // ClipMindApp.jsx). This sat at 30, so every new signup silently got three
+    // times the intended free allowance.
+    minutesTotal: 10,
+    minutesLeft: 10,
     stripeCustomerId: null,
     updatedAt: new Date().toISOString(),
   };
